@@ -1,10 +1,98 @@
+import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { LogIn, MessageSquare, CheckCircle2, ScanSearch } from 'lucide-react'
+import { LogIn, MessageSquare, CheckCircle2, ScanSearch, Copy, Check } from 'lucide-react'
 import type { Account } from '@/types'
 
 interface AccountPanelProps {
   accounts: Account[]
   isScanning: boolean
+}
+
+function AccountItem({ account, index }: { account: Account; index: number }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(account.loginUrl)
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, x: -20 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: index * 0.03 }}
+      className="group glass-panel glow-border p-3 hover:bg-white/[0.02] transition-colors"
+    >
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground/30">#{index + 1}</span>
+          <span className="font-mono text-xs font-semibold text-foreground/90">{account.carid}</span>
+        </div>
+        <span className="rounded-full border border-indigo-500/15 bg-indigo-500/8 px-2 py-0.5 text-[9px] font-medium text-indigo-400/80">
+          Loại {account.type}
+        </span>
+      </div>
+
+      <div className="flex items-center justify-between mb-2.5 text-[10px]">
+        <span className="text-muted-foreground/35">ID: <span className="font-mono text-muted-foreground/60">{account.id}</span></span>
+        <span className="flex items-center gap-1">
+          <span className="relative flex h-1.5 w-1.5">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
+            <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
+          </span>
+          <span className="font-medium text-emerald-400/80">{account.status}</span>
+        </span>
+      </div>
+
+      <div className="flex gap-1.5 relative z-10">
+        <button
+          onClick={handleCopy}
+          title="Sao chép link đăng nhập"
+          className="flex shrink-0 w-8 items-center justify-center rounded-lg border border-white/[0.04] bg-white/[0.02] text-muted-foreground/60 transition-all hover:bg-white/[0.08] hover:text-foreground cursor-pointer"
+        >
+          <AnimatePresence mode="wait">
+            {copied ? (
+              <motion.div
+                key="check"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0 }}
+              >
+                <Check className="h-3.5 w-3.5 text-emerald-400" />
+              </motion.div>
+            ) : (
+              <motion.div
+                key="copy"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0 }}
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </button>
+
+        <button
+          onClick={() => window.open(account.loginUrl, '_blank')}
+          className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-white/[0.04] bg-white/[0.02] py-1 text-[10px] font-medium text-muted-foreground/60 transition-all hover:bg-white/[0.05] hover:text-foreground/80 cursor-pointer"
+        >
+          <LogIn className="h-3 w-3" />
+          Đăng Nhập
+        </button>
+
+        <button
+          onClick={() => window.open(account.chatUrl, '_blank')}
+          className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-gradient-to-r from-violet-600/80 to-indigo-600/80 py-1 text-[10px] font-medium text-white transition-all hover:brightness-110 cursor-pointer shadow-md shadow-violet-500/20 hover:shadow-violet-500/40"
+        >
+          <MessageSquare className="h-3 w-3" />
+          Trò Chuyện
+        </button>
+      </div>
+    </motion.div>
+  )
 }
 
 export function AccountPanel({ accounts, isScanning }: AccountPanelProps) {
@@ -44,52 +132,7 @@ export function AccountPanel({ accounts, isScanning }: AccountPanelProps) {
             </motion.div>
           ) : (
             accounts.map((account, i) => (
-              <motion.div
-                key={account.carid}
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.03 }}
-                layout
-                className="group glass-panel glow-border p-3 hover:bg-white/[0.02] transition-colors"
-              >
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] text-muted-foreground/30">#{i + 1}</span>
-                    <span className="font-mono text-xs font-semibold text-foreground/90">{account.carid}</span>
-                  </div>
-                  <span className="rounded-full border border-indigo-500/15 bg-indigo-500/8 px-2 py-0.5 text-[9px] font-medium text-indigo-400/80">
-                    Loại {account.type}
-                  </span>
-                </div>
-
-                <div className="flex items-center justify-between mb-2.5 text-[10px]">
-                  <span className="text-muted-foreground/35">ID: <span className="font-mono text-muted-foreground/60">{account.id}</span></span>
-                  <span className="flex items-center gap-1">
-                    <span className="relative flex h-1.5 w-1.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-60" />
-                      <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    </span>
-                    <span className="font-medium text-emerald-400/80">{account.status}</span>
-                  </span>
-                </div>
-
-                <div className="flex gap-1.5">
-                  <button
-                    onClick={() => window.open(account.loginUrl, '_blank')}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-lg border border-white/[0.04] bg-white/[0.02] py-1 text-[10px] font-medium text-muted-foreground/60 transition-all hover:bg-white/[0.05] hover:text-foreground/80"
-                  >
-                    <LogIn className="h-3 w-3" />
-                    Đăng Nhập
-                  </button>
-                  <button
-                    onClick={() => window.open(account.chatUrl, '_blank')}
-                    className="flex flex-1 items-center justify-center gap-1 rounded-lg bg-gradient-to-r from-violet-600/80 to-indigo-600/80 py-1 text-[10px] font-medium text-white transition-all hover:brightness-110"
-                  >
-                    <MessageSquare className="h-3 w-3" />
-                    Trò Chuyện
-                  </button>
-                </div>
-              </motion.div>
+              <AccountItem key={account.carid} account={account} index={i} />
             ))
           )}
         </AnimatePresence>
