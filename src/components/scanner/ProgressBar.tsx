@@ -7,7 +7,7 @@ interface ProgressBarProps {
   isScanning: boolean
 }
 
-export function ProgressBar({ progress, isScanning }: ProgressBarProps) {
+export function ProgressBar({ progress, isScanning, isPaused }: ProgressBarProps & { isPaused: boolean }) {
   const pct = typeof progress.percentage === 'string'
     ? parseFloat(progress.percentage)
     : progress.percentage
@@ -44,9 +44,11 @@ export function ProgressBar({ progress, isScanning }: ProgressBarProps) {
       <div className="flex-1 min-w-0">
         <div className="mb-1.5 flex items-center justify-between">
           <div className="flex items-center gap-1.5">
-            <Activity className={`h-3 w-3 ${isScanning ? 'text-violet-400 animate-pulse' : 'text-muted-foreground/30'}`} />
+            <Activity className={`h-3 w-3 ${isScanning && !isPaused ? 'text-violet-400 animate-pulse' : 'text-muted-foreground/30'}`} />
             <span className="text-[11px] font-medium text-muted-foreground/60">
-              {isScanning ? 'Đang quét...' : progress.total > 0 ? 'Hoàn thành' : 'Chờ quét'}
+              {isScanning
+                ? isPaused ? 'Đang tạm dừng' : 'Đang quét...'
+                : progress.total > 0 ? 'Hoàn thành' : 'Chờ lệnh quét'}
             </span>
           </div>
           <span className="text-[11px] tabular-nums text-muted-foreground/40">
@@ -58,13 +60,15 @@ export function ProgressBar({ progress, isScanning }: ProgressBarProps) {
           <motion.div
             className="absolute inset-y-0 left-0 rounded-full"
             style={{
-              background: 'linear-gradient(90deg, #8b5cf6, #6366f1, #06b6d4)',
+              background: isPaused
+                ? 'linear-gradient(90deg, #f59e0b, #fbbf24)'
+                : 'linear-gradient(90deg, #8b5cf6, #6366f1, #06b6d4)',
             }}
             initial={{ width: '0%' }}
             animate={{ width: `${pct}%` }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
           >
-            {isScanning && (
+            {isScanning && !isPaused && (
               <div className="absolute inset-0 animate-shimmer bg-gradient-to-r from-transparent via-white/25 to-transparent" />
             )}
           </motion.div>

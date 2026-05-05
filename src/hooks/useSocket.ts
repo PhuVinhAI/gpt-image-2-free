@@ -12,6 +12,7 @@ import type {
   ProgressPayload,
   ScanCompletedPayload,
   ScanErrorPayload,
+  ScanStoppedPayload
 } from '@/types'
 
 export interface ScannerConfig {
@@ -28,30 +29,36 @@ const DEFAULT_CONFIG: ScannerConfig = {
   timeout: 60,
 }
 
+function getSaved<T>(key: string, defaultValue: T): T {
+  try {
+    const saved = localStorage.getItem(key)
+    return saved ? JSON.parse(saved) : defaultValue
+  } catch {
+    return defaultValue
+  }
+}
+
 export function useSocket() {
   const socketRef = useRef<Socket | null>(null)
   const [isConnected, setIsConnected] = useState(false)
-  const [isScanning, setIsScanning] = useState(false)
 
-  // Load from localStorage on mount
-  const [accounts, setAccounts] = useState<Account[]>(() => {
-    try {
-      const saved = localStorage.getItem('sharedchat_accounts')
-      return saved ? JSON.parse(saved) : []
-    } catch {
-      return []
-    }
-  })
+  // 100% Persisted States
+  const [isScanning, setIsScanning] = useState<boolean>(() => getSaved('sc_isScanning', false))
+  const [isPaused, setIsPaused] = useState<boolean>(() => getSaved('sc_isPaused', false))
+  const [accounts, setAccounts] = useState<Account[]>(() => getSaved('sc_accounts', []))
+  const [logs, setLogs] = useState<LogEntry[]>(() => getSaved('sc_logs', []))
+  const [progress, setProgress] = useState<ProgressState>(() => getSaved('sc_progress', { completed: 0, total: 0, percentage: 0 }))
+  const [summary, setSummary] = useState<ScanSummary | null>(() => getSaved('sc_summary', null))
+  const [config, setConfig] = useState<ScannerConfig>(() => getSaved('sc_config', DEFAULT_CONFIG))
 
-  const [logs, setLogs] = useState<LogEntry[]>([])
-  const [progress, setProgress] = useState<ProgressState>({ completed: 0, total: 0, percentage: 0 })
-  const [summary, setSummary] = useState<ScanSummary | null>(null)
-  const [config, setConfig] = useState<ScannerConfig>(DEFAULT_CONFIG)
-
-  // Sync accounts to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('sharedchat_accounts', JSON.stringify(accounts))
-  }, [accounts])
+  // Sync to Local Storage automatically
+  useEffect(() => { localStorage.setItem('sc_isScanning', JSON.stringify(isScanning)) }, [isScanning])
+  useEffect(() => { localStorage.setItem('sc_isPaused', JSON.stringify(isPaused)) }, [isPaused])
+  useEffect(() => { localStorage.setItem('sc_accounts', JSON.stringify(accounts)) }, [accounts])
+  useEffect(() => { localStorage.setItem('sc_logs', JSON.stringify(logs)) }, [logs])
+  useEffect(() => { localStorage.setItem('sc_progress', JSON.stringify(progress)) }, [progress])
+  useEffect(() => { localStorage.setItem('sc_summary', JSON.stringify(summary)) }, [summary])
+  useEffect(() => { localStorage.setItem('sc_config', JSON.stringify(config)) }, [config])
 
   const addLog = useCallback((type: LogType, message: string) => {
     const timestamp = new Date().toLocaleTimeString('vi-VN')
@@ -69,8 +76,22 @@ export function useSocket() {
     socket.on('connect', () => setIsConnected(true))
     socket.on('disconnect', () => setIsConnected(false))
 
+    // Tự động kiểm tra chéo trạng thái với Server khi vừa vào web
+    socket.on('sync-state', (state: { isScanning: boolean, isPaused: boolean }) => {
+      // Tự sửa sai nếu Backend đã dừng nhưng Local Storage báo đang chạy
+      if (!state.isScanning && isScanning) {
+        setIsScanning(false)
+        setIsPaused(false)
+        addLog('info', 'HỆ THỐNG: Quá trình quét đã kết thúc khi bạn rời đi.')
+      } else {
+        setIsScanning(state.isScanning)
+        setIsPaused(state.isPaused)
+      }
+    })
+
     socket.on('scan-started', (data: ScanStartedPayload) => {
       setIsScanning(true)
+      setIsPaused(false)
       setAccounts([])
       setLogs([])
       setSummary(null)
@@ -80,7 +101,7 @@ export function useSocket() {
 
     socket.on('accounts-fetched', (data: AccountsFetchedPayload) => {
       setProgress({ completed: 0, total: data.total, percentage: 0 })
-      addLog('success', `Tìm thấy ${data.total} tài khoản cần kiểm tra`)
+      addLog('success', `Đã kết nối! Tìm thấy ${data.total} tài khoản cần kiểm tra`)
     })
 
     socket.on('log', (data: LogPayload) => {
@@ -92,29 +113,55 @@ export function useSocket() {
     })
 
     socket.on('account-found', (account: Account) => {
-      setAccounts(prev => [...prev, account])
+      setAccounts(prev => {
+        if (prev.some(a => a.carid === account.carid)) return prev
+        return [...prev, account]
+      })
       addLog('success', `TÌM THẤY: ${account.carid} (Loại: ${account.type})`)
     })
 
     socket.on('scan-completed', (data: ScanCompletedPayload) => {
       setIsScanning(false)
+      setIsPaused(false)
       setSummary(data.summary)
-      addLog('success', `Quét hoàn tất! Tìm thấy ${data.summary.enabled} tài khoản khả dụng`)
+      addLog('success', `Quét hoàn tất toàn bộ! Tìm thấy ${data.summary.enabled} tài khoản khả dụng`)
+    })
+
+    socket.on('scan-paused', () => {
+      setIsPaused(true)
+      addLog('warning', 'HỆ THỐNG: Đã TẠM DỪNG tiến trình quét.')
+    })
+
+    socket.on('scan-resumed', () => {
+      setIsPaused(false)
+      addLog('info', 'HỆ THỐNG: Đã TIẾP TỤC tiến trình quét.')
+    })
+
+    socket.on('scan-stopped', (data: ScanStoppedPayload) => {
+      setIsScanning(false)
+      setIsPaused(false)
+      if (data.summary) setSummary(data.summary)
+      addLog('error', data.message)
     })
 
     socket.on('scan-error', (data: ScanErrorPayload) => {
       setIsScanning(false)
+      setIsPaused(false)
       addLog('error', data.message)
     })
 
     return () => {
       socket.disconnect()
     }
-  }, [config.serverUrl, addLog])
+  }, [config.serverUrl, addLog, isScanning])
 
   const startScan = useCallback(() => {
     socketRef.current?.emit('start-scan', { userToken: config.userToken })
   }, [config.userToken])
+
+  const pauseScan = useCallback(() => socketRef.current?.emit('pause-scan'), [])
+  const resumeScan = useCallback(() => socketRef.current?.emit('resume-scan'), [])
+  const stopScan = useCallback(() => socketRef.current?.emit('stop-scan'), [])
 
   const updateConfig = useCallback((updates: Partial<ScannerConfig>) => {
     setConfig(prev => ({ ...prev, ...updates }))
@@ -123,6 +170,7 @@ export function useSocket() {
   return {
     isConnected,
     isScanning,
+    isPaused,
     accounts,
     logs,
     progress,
@@ -130,5 +178,8 @@ export function useSocket() {
     config,
     updateConfig,
     startScan,
+    pauseScan,
+    resumeScan,
+    stopScan
   }
 }

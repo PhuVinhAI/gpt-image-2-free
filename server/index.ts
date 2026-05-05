@@ -83,6 +83,12 @@ interface ImageFeatureStatus {
   isHidden?: boolean
 }
 
+// === Tác vụ điều hướng toàn cục ===
+let scanState = {
+  isPaused: false,
+  shouldStop: false
+}
+
 async function getAccountList(): Promise<AccountInfo[]> {
   try {
     const timestamp = Date.now()
@@ -107,7 +113,7 @@ async function checkImageFeatureStatus(
   carid: string,
   accountInfo: AccountInfo,
   socket: Socket
-): Promise<ScanResult> {
+): Promise<ScanResult | null> {
   const context = await browser.createBrowserContext()
   const page: Page = await context.newPage()
 
@@ -130,27 +136,41 @@ async function checkImageFeatureStatus(
       ;(window as any).chrome = { runtime: {} }
     })
 
-    socket.emit('log', { carid, message: 'Logging in...', type: 'info' })
+    socket.emit('log', { carid, message: 'Đang đăng nhập...', type: 'info' })
 
     const loginUrl = `${CONFIG.baseUrl}/auth/logintoken?carid=${carid}&usertoken=${CONFIG.usertoken}`
     await page.goto(loginUrl, { waitUntil: 'domcontentloaded', timeout: CONFIG.timeout })
+
+    // Check Pause & Stop
+    while (scanState.isPaused && !scanState.shouldStop) { await delay(500) }
+    if (scanState.shouldStop) return null
+
     await delay(randomDelay(4000, 6000))
 
     const currentUrl = page.url()
     if (!currentUrl.includes('chat.sharedchat.fun') || currentUrl.includes('login')) {
-      throw new Error('Login failed')
+      throw new Error('Đăng nhập thất bại')
     }
 
-    socket.emit('log', { carid, message: 'Looking for button...', type: 'info' })
+    socket.emit('log', { carid, message: 'Đang tìm nút tạo ảnh...', type: 'info' })
 
     const plusButtonSelector = 'button[data-testid="composer-plus-btn"]'
     try {
       await page.waitForSelector(plusButtonSelector, { timeout: CONFIG.selectorTimeout })
     } catch {
       await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight))
+
+      // Check Pause & Stop
+      while (scanState.isPaused && !scanState.shouldStop) { await delay(500) }
+      if (scanState.shouldStop) return null
+
       await delay(randomDelay(1500, 2500))
       await page.waitForSelector(plusButtonSelector, { timeout: CONFIG.selectorTimeout })
     }
+
+    // Check Pause & Stop
+    while (scanState.isPaused && !scanState.shouldStop) { await delay(500) }
+    if (scanState.shouldStop) return null
 
     await delay(randomDelay(300, 800))
     await page.click(plusButtonSelector)
@@ -210,7 +230,7 @@ async function checkImageFeatureStatus(
     })
 
     if (!imageFeatureStatus.found) {
-      socket.emit('log', { carid, message: 'Feature not found', type: 'error' })
+      socket.emit('log', { carid, message: 'Tính năng không tồn tại', type: 'error' })
       return {
         carid,
         id: accountInfo.id,
@@ -230,16 +250,16 @@ async function checkImageFeatureStatus(
 
     if (imageFeatureStatus.isHidden) {
       status = 'HIDDEN'
-      reason = 'Feature is hidden'
-      socket.emit('log', { carid, message: 'Feature hidden', type: 'warning' })
+      reason = 'Tính năng bị ẩn'
+      socket.emit('log', { carid, message: 'Tính năng bị ẩn', type: 'warning' })
     } else if (imageFeatureStatus.disabled || imageFeatureStatus.hasDataDisabled) {
       status = 'DISABLED'
-      reason = 'Feature disabled'
-      socket.emit('log', { carid, message: 'Feature disabled', type: 'warning' })
+      reason = 'Tính năng bị vô hiệu hoá'
+      socket.emit('log', { carid, message: 'Tính năng bị vô hiệu hoá', type: 'warning' })
     } else {
       status = 'ENABLED'
-      reason = 'Feature enabled'
-      socket.emit('log', { carid, message: 'ENABLED!', type: 'success' })
+      reason = 'Tính năng khả dụng'
+      socket.emit('log', { carid, message: '✅ KHẢ DỤNG!', type: 'success' })
     }
 
     return {
@@ -253,7 +273,7 @@ async function checkImageFeatureStatus(
       chatUrl: CONFIG.baseUrl,
     }
   } catch (error) {
-    socket.emit('log', { carid, message: `Error: ${(error as Error).message}`, type: 'error' })
+    socket.emit('log', { carid, message: `Lỗi: ${(error as Error).message}`, type: 'error' })
     return {
       carid,
       id: accountInfo.id,
@@ -270,14 +290,18 @@ async function checkImageFeatureStatus(
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id)
 
-  socket.on('start-scan', async () => {
-    console.log('Starting scan...')
+  socket.on('start-scan', async (data) => {
+    if (data?.userToken) CONFIG.usertoken = data.userToken
 
-    socket.emit('scan-started', { message: 'Fetching accounts...' })
+    // Reset control states
+    scanState = { isPaused: false, shouldStop: false }
+    console.log('Bắt đầu quét...')
+
+    socket.emit('scan-started', { message: 'Đang kết nối SharedChat để tải danh sách tài khoản...' })
 
     const accounts = await getAccountList()
     if (accounts.length === 0) {
-      socket.emit('scan-error', { message: 'No accounts found' })
+      socket.emit('scan-error', { message: 'Không tìm thấy tài khoản nào' })
       return
     }
 
@@ -293,7 +317,22 @@ io.on('connection', (socket) => {
 
     const checkPromises = accounts.map((account) =>
       limit(async () => {
+        // Abort right away if stopped
+        if (scanState.shouldStop) return null
+
+        // Idle if paused
+        while (scanState.isPaused && !scanState.shouldStop) {
+          await delay(500)
+        }
+
+        // Re-check stop after pause
+        if (scanState.shouldStop) return null
+
         const result = await checkImageFeatureStatus(browser, account.carid, account, socket)
+
+        // Null means it aborted mid-flight
+        if (result === null) return null
+
         completed++
 
         socket.emit('progress', {
@@ -310,10 +349,12 @@ io.on('connection', (socket) => {
       })
     )
 
-    const results = await Promise.all(checkPromises)
+    const rawResults = await Promise.all(checkPromises)
     await browser.close()
 
+    const results = rawResults.filter((r): r is ScanResult => r !== null)
     const enabled = results.filter((r) => r.enabled)
+
     const summary = {
       total: results.length,
       enabled: enabled.length,
@@ -323,7 +364,27 @@ io.on('connection', (socket) => {
       errors: results.filter((r) => r.status === 'ERROR').length,
     }
 
-    socket.emit('scan-completed', { summary, results: enabled })
+    if (scanState.shouldStop) {
+      socket.emit('scan-stopped', { message: 'Đã dừng tiến trình quét thành công.', summary, results: enabled })
+    } else {
+      socket.emit('scan-completed', { summary, results: enabled })
+    }
+  })
+
+  // === Control Event Listeners ===
+  socket.on('pause-scan', () => {
+    scanState.isPaused = true
+    socket.emit('scan-paused')
+  })
+
+  socket.on('resume-scan', () => {
+    scanState.isPaused = false
+    socket.emit('scan-resumed')
+  })
+
+  socket.on('stop-scan', () => {
+    scanState.shouldStop = true
+    socket.emit('log', { carid: 'HỆ THỐNG', message: 'Đã nhận lệnh huỷ. Đang xử lý các tài khoản còn dang dở để đóng trình duyệt an toàn...', type: 'warning' })
   })
 
   socket.on('disconnect', () => {
@@ -332,23 +393,20 @@ io.on('connection', (socket) => {
 })
 
 app.get('/api/config', (_req, res) => {
-  res.json({
-    concurrency: CONFIG.concurrency,
-    baseUrl: CONFIG.baseUrl,
-  })
+  res.json({ concurrency: CONFIG.concurrency, baseUrl: CONFIG.baseUrl })
 })
 
 app.post('/api/config', (req, res) => {
   const { usertoken } = req.body
   if (usertoken) {
     CONFIG.usertoken = usertoken
-    res.json({ success: true, message: 'Token updated' })
+    res.json({ success: true, message: 'Đã cập nhật Token' })
   } else {
-    res.status(400).json({ success: false, message: 'Token required' })
+    res.status(400).json({ success: false, message: 'Vui lòng cung cấp Token' })
   }
 })
 
 const PORT = process.env.PORT || 3001
 server.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`)
+  console.log(`Server Backend đang chạy tại http://localhost:${PORT}`)
 })

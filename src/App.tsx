@@ -12,6 +12,7 @@ function App() {
   const {
     isConnected,
     isScanning,
+    isPaused,
     accounts,
     logs,
     progress,
@@ -19,6 +20,9 @@ function App() {
     config,
     updateConfig,
     startScan,
+    pauseScan,
+    resumeScan,
+    stopScan,
   } = useSocket()
 
   return (
@@ -35,14 +39,18 @@ function App() {
               config={config}
               onConfigChange={updateConfig}
               isScanning={isScanning}
+              isPaused={isPaused}
               onStartScan={startScan}
+              onPauseScan={pauseScan}
+              onResumeScan={resumeScan}
+              onStopScan={stopScan}
               isConnected={isConnected}
             />
           </div>
 
           <div className="flex flex-1 flex-col min-h-0 min-w-0">
             <StatsRow summary={summary} progress={progress} />
-            <ProgressBar progress={progress} isScanning={isScanning} />
+            <ProgressBar progress={progress} isScanning={isScanning} isPaused={isPaused} />
 
             <div className="flex flex-1 min-h-0 gap-3 px-5 pb-4">
               <div className="flex-1 min-w-0 h-full glass-panel overflow-hidden">

@@ -58,6 +58,12 @@ export interface ScanCompletedPayload {
   results: Account[]
 }
 
+export interface ScanStoppedPayload {
+  message: string
+  summary?: ScanSummary
+  results?: Account[]
+}
+
 export interface ScanErrorPayload {
   message: string
 }
