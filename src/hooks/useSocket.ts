@@ -51,6 +51,12 @@ export function useSocket() {
   const [summary, setSummary] = useState<ScanSummary | null>(() => getSaved('sc_summary', null))
   const [config, setConfig] = useState<ScannerConfig>(() => getSaved('sc_config', DEFAULT_CONFIG))
 
+  // Dùng Ref để tránh stale closure trong useEffect mà không gây re-connect
+  const isScanningRef = useRef(isScanning)
+  useEffect(() => {
+    isScanningRef.current = isScanning
+  }, [isScanning])
+
   // Sync to Local Storage automatically
   useEffect(() => { localStorage.setItem('sc_isScanning', JSON.stringify(isScanning)) }, [isScanning])
   useEffect(() => { localStorage.setItem('sc_isPaused', JSON.stringify(isPaused)) }, [isPaused])
@@ -79,7 +85,7 @@ export function useSocket() {
     // Tự động kiểm tra chéo trạng thái với Server khi vừa vào web
     socket.on('sync-state', (state: { isScanning: boolean, isPaused: boolean }) => {
       // Tự sửa sai nếu Backend đã dừng nhưng Local Storage báo đang chạy
-      if (!state.isScanning && isScanning) {
+      if (!state.isScanning && isScanningRef.current) {
         setIsScanning(false)
         setIsPaused(false)
         addLog('info', 'HỆ THỐNG: Quá trình quét đã kết thúc khi bạn rời đi.')
@@ -153,7 +159,7 @@ export function useSocket() {
     return () => {
       socket.disconnect()
     }
-  }, [config.serverUrl, addLog, isScanning])
+  }, [config.serverUrl, addLog]) // <-- FIX: Đã gỡ isScanning ra khỏi mảng dependency
 
   const startScan = useCallback(() => {
     socketRef.current?.emit('start-scan', { userToken: config.userToken })
